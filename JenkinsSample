@@ -1,0 +1,272 @@
+#!groovy
+import groovy.json.JsonSlurperClassic
+node ('Java_worker4'){
+	
+//Building with Paramters
+	properties(
+	  [
+		parameters(
+		[string(defaultValue: '', name: 'SANDBOX', description: 'Please choose dev, qa, uat, or prod sandboxes'),
+		 string(defaultValue: '', name: 'PreviousCommit', description: 'How Many Commits back to build off')
+		  ]
+		)
+	  ]
+	)
+	
+def BUILD_NUMBER=env.BUILD_NUMBER
+def RUN_ARTIFACT_DIR="tests/${BUILD_NUMBER}"
+def JWT_KEY_CRED_ID = ""
+//Connected App Per Enviorment Consumer Keys
+	def DEV_ENV_KEY = ""
+	def XLTOOLS_ENV_KEY = ""
+	def QA_ENV_KEY	= ""
+	def UAT_ENV_KEY = ""
+	def OPEX_ENV_KEY = ""
+	def UAT2_ENV_KEY = ""
+	def PROD_ENV_KEY = ""
+	
+	stage ('Checkout Source') {
+		checkout scm
+	}
+
+stage('CICD Branch and Enviorment Verification') {
+		script { 
+		if (env.BRANCH_NAME != 'xltools' && env.BRANCH_NAME != 'dev' && env.BRANCH_NAME != 'qa' && env.BRANCH_NAME != 'staging' && env.BRANCH_NAME != 'test456' ) {
+			echo 'Branch is not a CI baseline branch - Build Canceled'
+			currentBuild.result = "UNSTABLE"
+			
+		} else if ("${params.SANDBOX}" != 'xltools' && "${params.SANDBOX}" != 'dev' && "${params.SANDBOX}" != 'qa' && "${params.SANDBOX}" != 'uat' && "${params.SANDBOX}" != 'prod' && "${params.SANDBOX}" != 'OpexTrain' && "${params.SANDBOX}" != 'uat2' && "${params.SANDBOX}" != 'Prod')  {
+			echo 'The identified sandbox is not supported by this pipeline - Build Canceled'
+			currentBuild.result = "UNSTABLE"
+		
+		} else {
+stage('Create Delta Directory') {
+                script {
+	// defining variables to be used
+                    def Delta_Dir = "SF_Deploy" //New Directory
+                    sh "rm -rf ${Delta_Dir}" //Delete Previous Directory
+                    def root_folder_changes = "force-app/main/default" //Set focus on where chnages will happen
+                    def folders = ["objects", "aura", "lwc","email"] // Creating list to handle subfolders
+                    def folders_complete = folders.collect { "force-app/main/default/$it" } //Collecting all subfolders
+	// List all files from the git diff commannd
+                    List<String> source_changed = sh(
+                        returnStdout: true,
+                        script: "git diff --name-only HEAD~${params.PreviousCommit}").split("\\r?\\n") //splits at the end of each file change from git diff command
+	//For loop through all files that chnaged
+                    for (int i = 0; i < source_changed.size(); i++) {
+                        echo "source file changed: ${source_changed[i]}"
+	//Handling class files to get thier respective xml
+                        if (source_changed[i].endsWith("cls")) {
+                            File file_source_changed_cls = new File(source_changed[i])
+                            def parent_cls = file_source_changed_cls.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent_cls}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent_cls}"
+                            sh "cp -r '${source_changed[i]}-meta.xml' ${Delta_Dir}/${parent_cls}"
+	//Handling component files to get thier respective xml
+                        } else if (source_changed[i].endsWith("component")) {
+                            File file_source_changed_comp = new File(source_changed[i])
+                            def parent_component = file_source_changed_comp.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent_component}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent_component}"
+                            sh "cp -r '${source_changed[i]}-meta.xml' ${Delta_Dir}/${parent_component}"
+                        }
+	//Handling page files to get thier respective xml
+			if (source_changed[i].endsWith("page")) {
+                            File file_source_changed_page = new File(source_changed[i])
+                            def parent_page = file_source_changed_page.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent_page}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent_page}"
+                            sh "cp -r '${source_changed[i]}-meta.xml' ${Delta_Dir}/${parent_page}"
+	//Handling crt files to get thier respective xml
+                        } else if (source_changed[i].endsWith("crt")) {
+                            File file_source_changed_crt = new File(source_changed[i])
+                            def parent_crt = file_source_changed_crt.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent_crt}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent_crt}"
+                            sh "cp -r '${source_changed[i]}-meta.xml' ${Delta_Dir}/${parent_crt}"
+			}
+	//Handling Assets files to get thier respective xml
+			if (source_changed[i].endsWith("asset")) {
+                            File file_source_changed_asset = new File(source_changed[i])
+                            def parent_asset = file_source_changed_asset.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent_asset}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent_asset}"
+                            sh "cp -r '${source_changed[i]}-meta.xml' ${Delta_Dir}/${parent_asset}"
+			}else if (source_changed[i].endsWith("trigger")) {
+                            File file_source_changed_trigger = new File(source_changed[i])
+                            def parent_trigger = file_source_changed_trigger.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent_trigger}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent_trigger}"
+                            sh "cp -r '${source_changed[i]}-meta.xml' ${Delta_Dir}/${parent_trigger}"
+			}
+                        results = folders_complete.findAll {source_changed[i].startsWith(it).each{}}
+	//Using a list to copy all contents subfolders along with parent
+                        if (results) {
+                            results = results[0]
+                            results_dirname = results.split("/")[-1]
+                            def objects_subfolder = source_changed[i].split(results + "/")[-1].split("/")[0]
+                            echo "objects_subfolder= ${objects_subfolder}"
+                            def objects_subfolder_full_path = results + "/" + objects_subfolder
+                            echo "objects_subfolder_full_path= ${objects_subfolder_full_path}"
+                            sh "mkdir -p ${Delta_Dir}/${results_dirname}"
+                            sh "cp -r '${objects_subfolder_full_path}' ${Delta_Dir}/${results_dirname}"
+	//Handling all other files that have no relation and is a folder to file relationship with focus .xml
+                        } else if (source_changed[i].endsWith("xml")) {
+                            File file_source_changed = new File(source_changed[i])
+                            def parent = file_source_changed.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent}"
+                        }
+                    }
+                }
+        }
+			
+//Authorize to Sandbox 
+stage ('Deploy') {
+	withCredentials([file(credentialsId: JWT_KEY_CRED_ID, variable: 'jwt_key_file')]) {
+	if ("${params.SANDBOX}" == 'xltools') {
+		//Autorize to SandBox
+		echo "Sanbox = ${params.SANDBOX} Deploycode to Xltools"
+		echo "Building from Last Commit on Branch ${env.BRANCH_NAME}"
+		if (isUnix()) { rc = sh returnStatus: true, script: "sfdx force:auth:jwt:grant --clientid ${XLTOOLS_ENV_KEY} --username User@Salesforce.com.${params.SANDBOX} --jwtkeyfile ${workspace}/server.key --setdefaultdevhubusername --instanceurl https://test.salesforce.com" }
+		if (isUnix()) { rmsg = sh returnStdout: true, script: "sfdx force:source:deploy -p ${workspace}/SF_Deploy -u xltools@freedommortgage.com.${params.SANDBOX} -w 5"}
+try {	
+	stage('Runing Apex Test Dev') {
+		sh "mkdir -p ${RUN_ARTIFACT_DIR}"
+				timeout(time: 180, unit: 'SECONDS') {
+				rc = sh returnStatus: true, script: "sfdx force:apex:test:run --testlevel RunLocalTests --outputdir ${RUN_ARTIFACT_DIR} --resultformat tap --targetusername User@Salesforce.com.com.${params.SANDBOX}"
+				}
+	}
+}  catch (Exception e) {
+			echo "Apex Test Run Failed"
+			junit keepLongStdio: true, testResults: 'tests/**/*-junit.xml'	
+	}
+if (isUnix()) {
+			rc = sh returnStatus: true, script: "sfdx force:auth:logout --targetusername User@Salesforce.com.com.${params.SANDBOX} -p"
+				if (rc != 0) { error 'UAT Org Logout Failed' }}
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	}else if ("${params.SANDBOX}" == 'dev') {
+		echo "Sanbox = ${params.SANDBOX} Deploy code to DEV"
+		echo "Building from Last Commit on Branch ${env.BRANCH_NAME}"
+		if (isUnix()) { rc = sh returnStatus: true, script: "sfdx force:auth:jwt:grant --clientid ${DEV_ENV_KEY} --username xltools@freedommortgage.com.${params.SANDBOX} --jwtkeyfile ${workspace}/server.key --setdefaultdevhubusername --instanceurl https://test.salesforce.com" }
+		//if (isUnix()) { rmsg = sh returnStdout: true, script: "sfdx force:source:deploy -p ${workspace}/SF_Deploy -u xltools@freedommortgage.com.${params.SANDBOX} -w 5"}
+		echo "Deploying Code to Dev; Sandbox = ${params.SANDBOX}"
+		echo "${DEV_ENV_KEY}"
+try {	
+	stage('Runing Apex Test in QA') {
+		sh "mkdir -p ${RUN_ARTIFACT_DIR}"
+				timeout(time: 180, unit: 'SECONDS') {
+				rc = sh returnStatus: true, script: "sfdx force:apex:test:run --testlevel RunLocalTests --outputdir ${RUN_ARTIFACT_DIR} --resultformat tap --targetusername xltools@freedommortgage.com.${params.SANDBOX}"
+				}
+	}
+}  catch (Exception e) {
+			echo "Apex Test Run Failed"
+			junit keepLongStdio: true, testResults: 'tests/**/*-junit.xml'	
+	}
+if (isUnix()) {
+			rc = sh returnStatus: true, script: "sfdx force:auth:logout --targetusername xltools@freedommortgage.com.${params.SANDBOX} -p"
+				if (rc != 0) { error 'QA Org Logout Failed' }}
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	}else if ("${params.SANDBOX}" == 'qa') {
+		echo "Sanbox = ${params.SANDBOX} Deploy code to QA"
+		echo "Building from Last Commit on Branch ${env.BRANCH_NAME}"
+		if (isUnix()) { rc = sh returnStatus: true, script: "sfdx force:auth:jwt:grant --clientid ${QA_ENV_KEY} --username xltools@freedommortgage.com.${params.SANDBOX} --jwtkeyfile ${workspace}/server.key --setdefaultdevhubusername --instanceurl https://test.salesforce.com" }
+		//if (isUnix()) { rmsg = sh returnStdout: true, script: "sfdx force:source:deploy -p ${workspace}/SF_Deploy -u xltools@freedommortgage.com.${params.SANDBOX} -w 5"}
+try {	
+	stage('Runing Apex Test in QA') {
+		sh "mkdir -p ${RUN_ARTIFACT_DIR}"
+				timeout(time: 180, unit: 'SECONDS') {
+				rc = sh returnStatus: true, script: "sfdx force:apex:test:run --testlevel RunLocalTests --outputdir ${RUN_ARTIFACT_DIR} --resultformat tap --targetusername xltools@freedommortgage.com.${params.SANDBOX}"
+				}
+	}
+}  catch (Exception e) {
+			echo "Apex Test Run Failed"
+			junit keepLongStdio: true, testResults: 'tests/**/*-junit.xml'	
+	}
+if (isUnix()) {
+			rc = sh returnStatus: true, script: "sfdx force:auth:logout --targetusername xltools@freedommortgage.com.${params.SANDBOX} -p"
+				if (rc != 0) { error 'QA Org Logout Failed' }}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	 }else if ("${params.SANDBOX}" == 'uat') {
+		echo "Sanbox = ${params.SANDBOX} Deploy code to UAT"
+		echo "Building from Last Commit on Branch ${env.BRANCH_NAME}"
+		if (isUnix()) { rc = sh returnStatus: true, script: "sfdx force:auth:jwt:grant --clientid ${UAT_ENV_KEY} --username xltools@freedommortgage.com.${params.SANDBOX} --jwtkeyfile ${workspace}/server.key --setdefaultdevhubusername --instanceurl https://test.salesforce.com" }
+		//if (isUnix()) { rmsg = sh returnStdout: true, script: "sfdx force:source:deploy -p ${workspace}/SF_Deploy -u xltools@freedommortgage.com.${params.SANDBOX} -w 5"}
+try {	
+	stage('Running Apex Test in UAT') {
+		sh "mkdir -p ${RUN_ARTIFACT_DIR}"
+				timeout(time: 180, unit: 'SECONDS') {
+				rc = sh returnStatus: true, script: "sfdx force:apex:test:run --testlevel RunLocalTests --outputdir ${RUN_ARTIFACT_DIR} --resultformat tap --targetusername xltools@freedommortgage.com.${params.SANDBOX}"
+				}
+	}
+}  catch (Exception e) {
+			echo "Apex Test Run Failed"
+			junit keepLongStdio: true, testResults: 'tests/**/*-junit.xml'	
+	}
+if (isUnix()) {
+			rc = sh returnStatus: true, script: "sfdx force:auth:logout --targetusername xltools@freedommortgage.com.${params.SANDBOX} -p"
+				if (rc != 0) { error 'UAT Org Logout Failed' }}
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	
+	 }else if ("${params.SANDBOX}" == 'OpexTrain') {
+		echo "Sanbox = ${params.SANDBOX} Deploy code to OpexTrain"
+		echo "Building from Last Commit on Branch ${env.BRANCH_NAME}"
+		//if (isUnix()) { rc = sh returnStatus: true, script: "sfdx force:auth:jwt:grant --clientid ${UAT_ENV_KEY} --username xltools@freedommortgage.com.${params.SANDBOX} --jwtkeyfile ${workspace}/server.key --setdefaultdevhubusername --instanceurl https://test.salesforce.com" }
+		//if (isUnix()) { rmsg = sh returnStdout: true, script: "sfdx force:source:deploy -p ${workspace}/SF_Deploy -u xltools@freedommortgage.com.${params.SANDBOX} -w 5"}
+try {	
+	stage('Runing Apex Test OpexTrain') {
+		sh "mkdir -p ${RUN_ARTIFACT_DIR}"
+				timeout(time: 180, unit: 'SECONDS') {
+				rc = sh returnStatus: true, script: "sfdx force:apex:test:run --testlevel RunLocalTests --outputdir ${RUN_ARTIFACT_DIR} --resultformat tap --targetusername xltools@freedommortgage.com.${params.SANDBOX}"
+				}
+	}
+}  catch (Exception e) {
+			echo "Apex Test Run Failed"
+			junit keepLongStdio: true, testResults: 'tests/**/*-junit.xml'	
+	}
+if (isUnix()) {
+			rc = sh returnStatus: true, script: "sfdx force:auth:logout --targetusername xltools@freedommortgage.com.${params.SANDBOX} -p"
+				if (rc != 0) { error 'OpexTrain Org Logout Failed' }}
+		
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	 }else if ("${params.SANDBOX}" == 'uat2') {
+		echo "Sanbox = ${params.SANDBOX} Deploy code to UAT2"
+		echo "Building from Last Commit on Branch ${env.BRANCH_NAME}"
+		if (isUnix()) { rc = sh returnStatus: true, script: "sfdx force:auth:jwt:grant --clientid ${UAT2_ENV_KEY} --username xltools@freedommortgage.com.${params.SANDBOX} --jwtkeyfile ${workspace}/server.key --setdefaultdevhubusername --instanceurl https://test.salesforce.com" }
+		//if (isUnix()) { rmsg = sh returnStdout: true, script: "sfdx force:source:deploy -p ${workspace}/SF_Deploy -u xltools@freedommortgage.com.${params.SANDBOX} -w 5"}
+try {	
+	stage('Runing Apex Test UAT2') {
+		sh "mkdir -p ${RUN_ARTIFACT_DIR}"
+				timeout(time: 180, unit: 'SECONDS') {
+				rc = sh returnStatus: true, script: "sfdx force:apex:test:run --testlevel RunLocalTests --outputdir ${RUN_ARTIFACT_DIR} --resultformat tap --targetusername xltools@freedommortgage.com.${params.SANDBOX}"
+				}
+	}
+}  catch (Exception e) {
+			echo "Apex Test Run Failed"
+			junit keepLongStdio: true, testResults: 'tests/**/*-junit.xml'	
+	}
+if (isUnix()) {
+			rc = sh returnStatus: true, script: "sfdx force:auth:logout --targetusername xltools@freedommortgage.com.${params.SANDBOX} -p"
+				if (rc != 0) { error 'UAT2 Org Logout Failed' }}
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	 }else if ("${params.SANDBOX}" == 'Prod') {
+		echo "Sanbox = ${params.SANDBOX} Deploy code to PRODUCTION"
+		echo "Building from Last Commit on Branch ${env.BRANCH_NAME}"
+		//if (isUnix()) { rc = sh returnStatus: true, script: "sfdx force:auth:jwt:grant --clientid ${PROD_ENV_KEY} --username xltools@freedommortgage.com.${params.SANDBOX} --jwtkeyfile ${workspace}/server.key --setdefaultdevhubusername --instanceurl https://login.salesforce.com" }
+		//echo "ERROR: Prod Enviornment No Deploying Code"
+		//if (isUnix()) { rmsg = sh returnStdout: true, script: "sfdx force:source:deploy -p ${workspace}/SF_Deploy -u xltools@freedommortgage.com -w 5"}
+	 }
+
+			} // End Credentials 
+	} // End Deploy Stage 
+echo "Building from Last Commit on Branch ${env.BRANCH_NAME}"
+			} // End Else IF
+		} //End Script
+	} //End Stage
+} //End of Node
