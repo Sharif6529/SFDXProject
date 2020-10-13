@@ -1,0 +1,169 @@
+#!groovy
+import groovy.json.JsonSlurperClassic
+node ('Java_worker4') {
+      
+    def BUILD_NUMBER=env.BUILD_NUMBER
+    def RUN_ARTIFACT_DIR="tests/${BUILD_NUMBER}"
+    def QA_ORG="xltools@freedommortgage.com.venkat"
+    def SFDC_QA = "https://test.salesforce.com"
+    def JWT_KEY_CRED_ID = "a3d7dfed-81cd-44d3-9d35-9dad0da6e16f"
+    def CONNECTED_APP_CONSUMER_KEY="3MVG97wqanbUM37KF9VebGdxPvHSJCST99_z_Sw5U092k5_pvsMAFN0O6C4mmanK.pj8nqNACspLlSWyX8y_6"
+    def QA_Deploy = "SF_Deploy"
+    def toolbelt = tool 'sfdx'
+
+
+//Checkout Out Source Code
+	stage('Checkout Source') {
+		checkout scm
+	}
+	
+//Capture the changes in the Jenkins Server and Leverage for deployment
+		stage('Create Delta Directory') {
+                script {
+	// defining variables to be used
+                    def Delta_Dir = "SF_Deploy" //New Directory
+                    sh "rm -rf ${Delta_Dir}" //Delete Previous Directory
+                    def root_folder_changes = "force-app/main/default" //Set focus on where chnages will happen
+                    def folders = ["objects", "aura", "lwc","email"] // Creating list to handle subfolders
+                    def folders_complete = folders.collect { "force-app/main/default/$it" } //Collecting all subfolders
+	// List all files from the git diff commannd
+                    List<String> source_changed = sh(
+                        returnStdout: true,
+                        script: "git diff --name-only HEAD~").split("\\r?\\n") //splits at the end of each file change from git diff command
+	//For loop through all files that chnaged
+                    for (int i = 0; i < source_changed.size(); i++) {
+                        echo "source file changed: ${source_changed[i]}"
+	//Handling class files to get thier respective xml
+                        if (source_changed[i].endsWith("cls")) {
+                            File file_source_changed_cls = new File(source_changed[i])
+                            def parent_cls = file_source_changed_cls.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent_cls}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent_cls}"
+                            sh "cp -r '${source_changed[i]}-meta.xml' ${Delta_Dir}/${parent_cls}"
+	//Handling component files to get thier respective xml
+                        } else if (source_changed[i].endsWith("component")) {
+                            File file_source_changed_comp = new File(source_changed[i])
+                            def parent_component = file_source_changed_comp.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent_component}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent_component}"
+                            sh "cp -r '${source_changed[i]}-meta.xml' ${Delta_Dir}/${parent_component}"
+                        }
+	//Handling page files to get thier respective xml
+			if (source_changed[i].endsWith("page")) {
+                            File file_source_changed_page = new File(source_changed[i])
+                            def parent_page = file_source_changed_page.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent_page}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent_page}"
+                            sh "cp -r '${source_changed[i]}-meta.xml' ${Delta_Dir}/${parent_page}"
+	//Handling crt files to get thier respective xml
+                        } else if (source_changed[i].endsWith("crt")) {
+                            File file_source_changed_crt = new File(source_changed[i])
+                            def parent_crt = file_source_changed_crt.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent_crt}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent_crt}"
+                            sh "cp -r '${source_changed[i]}-meta.xml' ${Delta_Dir}/${parent_crt}"
+			}
+	//Handling Assets files to get thier respective xml
+			if (source_changed[i].endsWith("asset")) {
+                            File file_source_changed_asset = new File(source_changed[i])
+                            def parent_asset = file_source_changed_asset.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent_asset}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent_asset}"
+                            sh "cp -r '${source_changed[i]}-meta.xml' ${Delta_Dir}/${parent_asset}"
+			}else if (source_changed[i].endsWith("trigger")) {
+                            File file_source_changed_trigger = new File(source_changed[i])
+                            def parent_trigger = file_source_changed_trigger.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent_trigger}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent_trigger}"
+                            sh "cp -r '${source_changed[i]}-meta.xml' ${Delta_Dir}/${parent_trigger}"
+			}
+                        results = folders_complete.findAll {source_changed[i].startsWith(it).each{}}
+	//Using a list to copy all contents subfolders along with parent
+                        if (results) {
+		           echo "resultsall= ${results}"		
+                            results = results[0]
+			    echo "resultstest= ${results}"	
+                            results_dirname = results.split("/")[-1]
+		            echo "results_dirname = ${results_dirname}"			
+		          
+			if(results_dirname == 'objects'){
+		            def objects_subfolder_test = source_changed[i].split(results + "/")	
+			    echo "objects_subfolder_test= ${objects_subfolder_test}"	
+			    def objects_subfolder = source_changed[i].split(results + "/")[-1].split("/")[0]
+			    echo "objects_subfolder= ${objects_subfolder}"	
+			    def objects_subfolder_fields = source_changed[i].split(results + "/")[-1].split("/")[1]
+		            echo "objects_subfolder_fileds= ${objects_subfolder_fields}"
+			    def objects_subfolder_fields_xml = source_changed[i].split(results + "/")[-1].split("/")[2]
+			    echo "objects_subfolder_fields_xml = ${objects_subfolder_fields_xml}"	
+			    def objects_subfolder_full_path  = results + "/" + objects_subfolder
+			    echo "objects_subfolder_full_path = ${objects_subfolder_full_path}"
+			    sh "mkdir -p ${Delta_Dir}/${results_dirname}/${objects_subfolder}"	
+			   /* def FILE = ${objects_subfolder_full_path}/${objects_subfolder}.object-meta.xml
+				    script {
+					sh "if [[ -f "$FILE" ]]; then
+					    echo "Found file"
+					    else
+					    echo "Did not find file"
+					    fi"
+				    }*/			
+			    
+			
+			    echo "objects_subfolder_obgxml= ${objects_subfolder_full_path}/${objects_subfolder}.object-meta.xml"				
+			    sh "cp -r '${objects_subfolder_full_path}/${objects_subfolder}.object-meta.xml' ${Delta_Dir}/${results_dirname}/${objects_subfolder}"			    
+			    sh "mkdir -p ${Delta_Dir}/${results_dirname}/${objects_subfolder}/${objects_subfolder_fields}"
+			    sh "cp -r '${objects_subfolder_full_path}/${objects_subfolder_fields}/${objects_subfolder_fields_xml}' ${Delta_Dir}/${results_dirname}/${objects_subfolder}/${objects_subfolder_fields}" 	
+			}else{
+			    def objects_subfolder_test = source_changed[i].split(results + "/")	
+			    echo "objects_subfolder_test= ${objects_subfolder_test}"		
+                            def objects_subfolder = source_changed[i].split(results + "/")[-1].split("/")[0]
+                            echo "objects_subfolder= ${objects_subfolder}"
+                            def objects_subfolder_full_path = results + "/" + objects_subfolder
+                            echo "objects_subfolder_full_path= ${objects_subfolder_full_path}"
+                            sh "mkdir -p ${Delta_Dir}/${results_dirname}"
+                            sh "cp -r '${objects_subfolder_full_path}' ${Delta_Dir}/${results_dirname}"
+			}	
+	//Handling all other files that have no relation and is a folder to file relationship with focus .xml
+                        } else if (source_changed[i].endsWith("xml")) {
+                            File file_source_changed = new File(source_changed[i])
+                            def parent = file_source_changed.getParent().split("/")[-1]
+                            sh "mkdir -p ${Delta_Dir}/${parent}"
+                            sh "cp -r '${source_changed[i]}' ${Delta_Dir}/${parent}"
+                        }
+                    }
+                }
+        }
+
+
+//Wrap JWT credentions through all Stages
+withCredentials([file(credentialsId: JWT_KEY_CRED_ID, variable: 'jwt_key_file')]) {
+
+//Authorize QA
+	stage('Authorize QA') {
+		if (isUnix()) {
+			rc = sh returnStatus: true, script: "chmod 777 SF_Deploy"
+			rc = sh returnStatus: true, script: "chmod 777 SF_Deploy/*"
+			rc = sh returnStatus: true, script: "sfdx force:auth:jwt:grant --clientid ${CONNECTED_APP_CONSUMER_KEY} --username ${QA_ORG} --jwtkeyfile server.key --setdefaultdevhubusername --instanceurl ${SFDC_QA}"
+				if (rc != 0) { error 'QA Org Authorization Failed' 
+		}
+	}
+
+//Deploy Code to QA
+	stage('Deploy Code') {	
+		if (isUnix()) {
+			rmsg = sh returnStdout: true, script: "sfdx force:source:deploy -p ${QA_Deploy} -u ${QA_ORG} -w 5"
+				if (rc != 0) { error 'QA Deployment Failed' 
+		}
+	}
+		
+//Log Out of QA
+	stage('Logout of QA') {
+		if (isUnix()) {
+			rc = sh returnStatus: true, script: "sfdx force:auth:logout --targetusername ${QA_ORG} -p"
+				if (rc != 0) { error 'QA Org Logout Failed' 
+		}
+			} //DEPLOY QA CLOSE
+		} // AUTHORIZE QA CLOSE
+	} // WITH CREDENTIAL CLOSE
+} // NODE CLOSE
+}
+}
