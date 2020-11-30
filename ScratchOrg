@@ -1,0 +1,28 @@
+  
+sfdx force:org:create -s -f config/project-scratch-def.json -a NewScratch -d 1
+sfdx force:apex:execute -f scripts/setMarketingUser.apex -u NewScratch
+
+# Five9CTIAdapter
+sfdx force:package:install --package 04tA0000000WbcsIAC --noprompt --wait 10 -u NewScratch
+# Marketing Cloud
+sfdx force:package:install --package 04t0H000000gmOVQAY --noprompt --wait 10 -u NewScratch
+# LiveMessage for Salesforce
+sfdx force:package:install --package 04t1J000000GeQrQAK --noprompt --wait 10 -u NewScratch
+# CIC for Salesforce
+sfdx force:package:install --package 04t1a000000VUjSAAW --noprompt --wait 10 -u NewScratch
+
+#mkdir temp
+move force-app\main\default\objects\Case\listViews\Open_Support_Cases.listView-meta.xml temp\Open_Support_Cases.listView-meta.xml
+move force-app\main\default\objects\Case\listViews\Support_Case.listView-meta.xml temp\Support_Case.listView-meta.xml 
+move force-app\main\default\objects\Case\listViews\Support_Cases.listView-meta.xml temp\Support_Cases.listView-meta.xml 
+move force-app\main\default\objects\Case\recordTypes\Support_Case.recordType-meta.xml temp\Support_Case.recordType-meta.xml
+
+#sfdx force:source:push -u NewScratch -f
+
+move temp\Open_Support_Cases.listView-meta.xml force-app\main\default\objects\Case\listViews\Open_Support_Cases.listView-meta.xml
+move temp\Support_Case.listView-meta.xml  force-app\main\default\objects\Case\listViews\Support_Case.listView-meta.xml
+move temp\Support_Cases.listView-meta.xml  force-app\main\default\objects\Case\listViews\Support_Cases.listView-meta.xml
+move temp\Support_Case.recordType-meta.xml force-app\main\default\objects\Case\recordTypes\Support_Case.recordType-meta.xml
+rmdir temp
+
+#sfdx force:source:push -u NewScratch -f
